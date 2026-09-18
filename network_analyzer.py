@@ -1,8 +1,18 @@
 import argparse
 import sys
 import signal
+import threading
 from collections import Counter
 from datetime import datetime
+
+try:
+    import msvcrt  
+    _PLATAFORMA_WINDOWS = True
+except ImportError:
+    import termios
+    import tty
+    import select
+    _PLATAFORMA_WINDOWS = False
 
 try:
     from scapy.all import (
@@ -200,6 +210,71 @@ def analisar_pacote(pacote, stats: EstatisticasCaptura, mostrar_payload: bool):
         print(f"{Cor.CINZA}{linha}{Cor.RESET}")
 
 
+def escutar_tecla_q(evento_parar: threading.Event):
+    try:
+        if _PLATAFORMA_WINDOWS:
+            while not evento_parar.is_set():
+                if msvcrt.kbhit():
+                    tecla = msvcrt.getch().decode(errors="ignore").lower()
+                    if tecla == "q":
+                        evento_parar.set()
+                        break
+                evento_parar.wait(0.1)
+        else:
+            fd = sys.stdin.fileno()
+            config_original = termios.tcgetattr(fd)
+            try:
+                tty.setcbreak(fd)
+                while not evento_parar.is_set():
+                    pronto, _, _ = select.select([sys.stdin], [], [], 0.1)
+                    if pronto:
+                        tecla = sys.stdin.read(1).lower()
+                        if tecla == "q":
+                            evento_parar.set()
+                            break
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, config_original)
+    except Exception:
+        pass
+
+
+def montar_menu():
+    print(f"{Cor.NEGRITO}{'='*60}{Cor.RESET}")
+    print(f"{Cor.NEGRITO}Analisador de Redes e Pacotes — Menu{Cor.RESET}")
+    print(f"{'='*60}")
+    print("1) Iniciar captura (interface padrão, sem filtro)")
+    print("2) Iniciar captura em uma interface específica")
+    print("3) Iniciar captura com filtro BPF (ex: tcp port 80, arp, icmp)")
+    print("4) Listar interfaces de rede disponíveis")
+    print("5) Sair")
+    print(f"{'='*60}")
+
+    while True:
+        escolha = input("Escolha uma opção [1-5]: ").strip()
+
+        if escolha == "1":
+            return {"interface": None, "filter": None}
+
+        if escolha == "2":
+            listar_interfaces()
+            iface = input("Digite o nome da interface: ").strip()
+            return {"interface": iface or None, "filter": None}
+
+        if escolha == "3":
+            filtro = input('Digite o filtro BPF (ex: "tcp port 80"): ').strip()
+            return {"interface": None, "filter": filtro or None}
+
+        if escolha == "4":
+            listar_interfaces()
+            continue
+
+        if escolha == "5":
+            print("Saindo...")
+            sys.exit(0)
+
+        print(f"{Cor.VERMELHO}Opção inválida.{Cor.RESET} Escolha um número de 1 a 5.")
+
+
 def listar_interfaces():
     print("Interfaces de rede disponíveis:")
     for nome in get_if_list():
@@ -225,6 +300,8 @@ def main():
                          help="Desativa cores no terminal")
     parser.add_argument("--list-interfaces", action="store_true",
                          help="Lista as interfaces de rede disponíveis e sai")
+    parser.add_argument("--menu", action="store_true",
+                         help="Abre o menu interativo mesmo passando outras opções")
     args = parser.parse_args()
 
     if args.sem_cor:
@@ -233,6 +310,11 @@ def main():
     if args.list_interfaces:
         listar_interfaces()
         return
+
+    if args.menu or len(sys.argv) == 1:
+        escolha = montar_menu()
+        args.interface = escolha["interface"] or args.interface
+        args.filter = escolha["filter"] or args.filter
 
     stats = EstatisticasCaptura()
     pacotes_capturados = []
@@ -251,11 +333,17 @@ def main():
 
     signal.signal(signal.SIGINT, encerrar)
 
+    evento_parar = threading.Event()
+    thread_tecla = threading.Thread(
+        target=escutar_tecla_q, args=(evento_parar,), daemon=True
+    )
+    thread_tecla.start()
+
     iface = args.interface or conf.iface
     print(f"{Cor.NEGRITO}Analisador de Redes e Pacotes{Cor.RESET}")
     print(f"Interface: {iface}")
     print(f"Filtro BPF: {args.filter or '(nenhum, captura tudo)'}")
-    print("Pressione Ctrl+C para parar e ver o resumo.\n")
+    print("Pressione Q ou Ctrl+C para parar e ver o resumo.\n")
 
     try:
         sniff(
@@ -264,6 +352,7 @@ def main():
             prn=callback,
             count=args.count if args.count > 0 else 0,
             store=False,
+            stop_filter=lambda pacote: evento_parar.is_set(),
         )
     except PermissionError:
         print(f"{Cor.VERMELHO}[ERRO] Permissão negada.{Cor.RESET} "
@@ -275,6 +364,7 @@ def main():
               "e se o Npcap/libpcap está instalado.")
         sys.exit(1)
 
+    evento_parar.set()
     print(stats.resumo())
     if args.output and pacotes_capturados:
         wrpcap(args.output, pacotes_capturados)
