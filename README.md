@@ -116,5 +116,3 @@ Top 5 IPs de origem:
 
 - Este script captura tráfego de rede real. Use apenas em redes e dispositivos sob sua responsabilidade ou autorização.
 - Requer privilégios elevados (root/administrador) porque a captura de pacotes brutos (raw sockets) exige isso no sistema operacional.
-
-## Em breve a versão .exe será publicada !
