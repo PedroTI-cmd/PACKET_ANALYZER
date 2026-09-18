@@ -6,7 +6,7 @@ from collections import Counter
 from datetime import datetime
 
 try:
-    import msvcrt  
+    import msvcrt
     _PLATAFORMA_WINDOWS = True
 except ImportError:
     import termios
@@ -270,9 +270,17 @@ def montar_menu():
 
         if escolha == "5":
             print("Saindo...")
+            pausar_saida()
             sys.exit(0)
 
         print(f"{Cor.VERMELHO}Opção inválida.{Cor.RESET} Escolha um número de 1 a 5.")
+
+
+def pausar_saida():
+    try:
+        input("\nPressione Enter para sair...")
+    except (EOFError, KeyboardInterrupt):
+        pass
 
 
 def listar_interfaces():
@@ -309,6 +317,7 @@ def main():
 
     if args.list_interfaces:
         listar_interfaces()
+        pausar_saida()
         return
 
     if args.menu or len(sys.argv) == 1:
@@ -325,10 +334,13 @@ def main():
             pacotes_capturados.append(pacote)
 
     def encerrar(sig, frame):
+        evento_parar.set()
+        thread_tecla.join(timeout=0.3)
         print(stats.resumo())
         if args.output and pacotes_capturados:
             wrpcap(args.output, pacotes_capturados)
             print(f"\n[+] {len(pacotes_capturados)} pacote(s) salvos em '{args.output}'")
+        pausar_saida()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, encerrar)
@@ -357,18 +369,22 @@ def main():
     except PermissionError:
         print(f"{Cor.VERMELHO}[ERRO] Permissão negada.{Cor.RESET} "
               f"Rode este script como root/administrador (ex: sudo python3 network_analyzer.py)")
+        pausar_saida()
         sys.exit(1)
     except OSError as e:
         print(f"{Cor.VERMELHO}[ERRO] {e}{Cor.RESET}")
         print("Verifique se a interface existe (use --list-interfaces) "
               "e se o Npcap/libpcap está instalado.")
+        pausar_saida()
         sys.exit(1)
 
     evento_parar.set()
+    thread_tecla.join(timeout=0.3)
     print(stats.resumo())
     if args.output and pacotes_capturados:
         wrpcap(args.output, pacotes_capturados)
         print(f"\n[+] {len(pacotes_capturados)} pacote(s) salvos em '{args.output}'")
+    pausar_saida()
 
 
 if __name__ == "__main__":
